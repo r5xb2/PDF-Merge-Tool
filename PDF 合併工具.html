@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>專業 PDF 合併工具 - 本地端安全處理</title>
+    <!-- 引入 Tailwind CSS 提供現代化 UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 pdf-lib 核心庫 -->
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <!-- 引入 SortableJS 實現拖拽排序 -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <style>
+        .sortable-ghost {
+            opacity: 0.4;
+            background-color: #ebf8ff;
+            border: 2px dashed #4299e1;
+        }
+        .file-card:hover .remove-btn {
+            display: block;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans">
+
+    <div class="max-w-3xl mx-auto py-12 px-4">
+        <!-- 標題區域 -->
+        <div class="text-center mb-10">
+            <h1 class="text-4xl font-extrabold text-gray-900 mb-2">PDF 合併工具</h1>
+            <p class="text-gray-600">純前端處理，您的檔案不會被上傳到任何伺服器，安全且隱私。</p>
+        </div>
+
+        <!-- 操作卡片 -->
+        <div class="bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
+            
+            <!-- 檔案上傳區 -->
+            <div id="dropzone" class="relative border-4 border-dashed border-gray-200 rounded-xl py-12 px-6 text-center hover:border-blue-400 transition-colors cursor-pointer group">
+                <input type="file" id="fileInput" multiple accept="application/pdf" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                <div class="space-y-4">
+                    <svg class="mx-auto h-16 w-16 text-gray-400 group-hover:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    <div class="text-xl font-medium text-gray-700">點擊或拖放 PDF 檔案至此</div>
+                    <p class="text-sm text-gray-500">支援多選，您可以隨後調整順序</p>
+                </div>
+            </div>
+
+            <!-- 檔案列表 -->
+            <div id="fileListContainer" class="mt-8 hidden">
+                <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                    <span class="mr-2">待合併列表</span>
+                    <span id="fileCount" class="bg-blue-100 text-blue-600 text-xs px-2 py-1 rounded-full">0</span>
+                </h2>
+                <div id="fileList" class="space-y-3">
+                    <!-- 動態插入檔案項目 -->
+                </div>
+                <p class="text-xs text-gray-400 mt-4 text-center">💡 提示：上下拖動檔案卡片可調整合併順序</p>
+            </div>
+
+            <!-- 按鈕區域 -->
+            <div id="actionArea" class="mt-10 hidden border-t pt-8">
+                <button id="mergeBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-6 rounded-xl shadow-lg transform active:scale-95 transition-all flex items-center justify-center space-x-2">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                    <span>合併並下載 PDF</span>
+                </button>
+                <button id="clearBtn" class="w-full mt-4 text-gray-500 hover:text-red-500 text-sm font-medium transition-colors">
+                    清空所有檔案
+                </button>
+            </div>
+        </div>
+
+        <!-- 狀態提示框 -->
+        <div id="statusToast" class="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-full shadow-2xl opacity-0 transition-opacity pointer-events-none">
+            正在處理中...
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const fileList = document.getElementById('fileList');
+        const fileListContainer = document.getElementById('fileListContainer');
+        const actionArea = document.getElementById('actionArea');
+        const fileCountSpan = document.getElementById('fileCount');
+        const mergeBtn = document.getElementById('mergeBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const statusToast = document.getElementById('statusToast');
+
+        let selectedFiles = [];
+
+        // 初始化拖拽排序
+        new Sortable(fileList, {
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            onEnd: function() {
+                // 當排序結束，重新排列 selectedFiles 數組
+                const order = Array.from(fileList.children).map(el => parseInt(el.dataset.index));
+                const newOrderFiles = order.map(index => selectedFiles.find(f => f.id === index));
+                selectedFiles = newOrderFiles;
+            }
+        });
+
+        // 處理檔案選取
+        fileInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            handleFiles(files);
+            fileInput.value = ''; // 重置 input 以便重複選取
+        });
+
+        function handleFiles(files) {
+            files.forEach(file => {
+                if (file.type === 'application/pdf') {
+                    const fileObj = {
+                        id: Date.now() + Math.random(),
+                        file: file
+                    };
+                    selectedFiles.push(fileObj);
+                }
+            });
+            renderList();
+        }
+
+        // 渲染列表介面
+        function renderList() {
+            if (selectedFiles.length > 0) {
+                fileListContainer.classList.remove('hidden');
+                actionArea.classList.remove('hidden');
+            } else {
+                fileListContainer.classList.add('hidden');
+                actionArea.classList.add('hidden');
+            }
+
+            fileCountSpan.innerText = selectedFiles.length;
+            fileList.innerHTML = '';
+
+            selectedFiles.forEach((fileObj) => {
+                const div = document.createElement('div');
+                div.className = 'file-card bg-gray-50 border border-gray-200 p-4 rounded-lg flex items-center justify-between cursor-move hover:shadow-sm transition-shadow';
+                div.dataset.index = fileObj.id;
+                
+                div.innerHTML = `
+                    <div class="flex items-center space-x-3 truncate">
+                        <svg class="w-6 h-6 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 012-2h4.586A1 1 0 0111 2.293l4.414 4.414a1 1 0 01.293.707V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"></path></svg>
+                        <span class="text-gray-700 font-medium truncate">${fileObj.file.name}</span>
+                        <span class="text-xs text-gray-400">(${(fileObj.file.size / 1024 / 1024).toFixed(2)} MB)</span>
+                    </div>
+                    <button onclick="removeFile(${fileObj.id})" class="text-gray-400 hover:text-red-500 transition-colors px-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                `;
+                fileList.appendChild(div);
+            });
+        }
+
+        // 移除單個檔案
+        window.removeFile = function(id) {
+            selectedFiles = selectedFiles.filter(f => f.id !== id);
+            renderList();
+        };
+
+        // 清空列表
+        clearBtn.addEventListener('click', () => {
+            if (confirm('確定要移除清單中所有檔案嗎？')) {
+                selectedFiles = [];
+                renderList();
+            }
+        });
+
+        // 合併邏輯
+        mergeBtn.addEventListener('click', async () => {
+            if (selectedFiles.length < 1) return;
+
+            showStatus('🚀 正在合併 PDF，請稍候...');
+            mergeBtn.disabled = true;
+            mergeBtn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            try {
+                const mergedPdf = await PDFLib.PDFDocument.create();
+
+                for (const fileObj of selectedFiles) {
+                    const arrayBuffer = await fileObj.file.arrayBuffer();
+                    const pdf = await PDFLib.PDFDocument.load(arrayBuffer);
+                    const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+                    copiedPages.forEach((page) => mergedPdf.addPage(page));
+                }
+
+                const mergedPdfBytes = await mergedPdf.save();
+                download(mergedPdfBytes, "merged_document.pdf", "application/pdf");
+                showStatus('✅ 合併完成！檔案已下載');
+            } catch (err) {
+                console.error(err);
+                showStatus('❌ 發生錯誤，請確保檔案格式正確且無損壞');
+            } finally {
+                mergeBtn.disabled = false;
+                mergeBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                setTimeout(() => hideStatus(), 3000);
+            }
+        });
+
+        // 下載輔助函數
+        function download(data, filename, type) {
+            const file = new Blob([data], { type: type });
+            const a = document.createElement("a");
+            const url = URL.createObjectURL(file);
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            }, 0);
+        }
+
+        function showStatus(msg) {
+            statusToast.innerText = msg;
+            statusToast.classList.remove('opacity-0');
+        }
+
+        function hideStatus() {
+            statusToast.classList.add('opacity-0');
+        }
+
+        // 拖拽區效果
+        const dropzone = document.getElementById('dropzone');
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropzone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropzone.addEventListener(eventName, () => dropzone.classList.add('border-blue-500', 'bg-blue-50'), false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropzone.addEventListener(eventName, () => dropzone.classList.remove('border-blue-500', 'bg-blue-50'), false);
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = Array.from(dt.files);
+            handleFiles(files);
+        });
+    </script>
+</body>
+</html>
